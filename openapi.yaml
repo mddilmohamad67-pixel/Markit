@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Markit API
-  version: 0.1.0
+  version: 0.1.1
 paths:
   /api/health:
     get:
@@ -26,6 +26,14 @@ paths:
       responses:
         '200':
           description: created
+  /api/users/me:
+    get:
+      summary: Get current user (requires Firebase ID token or local JWT)
+      security:
+        - firebase: []
+      responses:
+        '200':
+          description: user object
 components:
   securitySchemes:
     firebase:

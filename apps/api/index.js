@@ -3,6 +3,7 @@ const mongoose = require('mongoose')
 const cors = require('cors')
 const Product = require('./models/Product')
 const adminRoutes = require('./routes/admin')
+const usersRoutes = require('./routes/users')
 const authorizeRole = require('./middleware/authorizeRole')
 const admin = require('firebase-admin')
 
@@ -25,6 +26,7 @@ if (!admin.apps.length) {
 }
 
 app.use('/api/admin', adminRoutes)
+app.use('/api/users', usersRoutes)
 
 // Health
 app.get('/api/health', (req, res) => res.json({ ok: true }))
