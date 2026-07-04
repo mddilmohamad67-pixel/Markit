@@ -1,15 +1,21 @@
 const express = require('express')
 const mongoose = require('mongoose')
 const cors = require('cors')
+const path = require('path')
 const Product = require('./models/Product')
 const adminRoutes = require('./routes/admin')
 const usersRoutes = require('./routes/users')
+const ordersRoutes = require('./routes/orders')
+const settingsRoutes = require('./routes/adminSettings')
 const authorizeRole = require('./middleware/authorizeRole')
 const admin = require('firebase-admin')
 
 const app = express()
 app.use(cors())
 app.use(express.json())
+
+// serve uploads
+app.use('/uploads', express.static(path.join(__dirname,'..','..','uploads')))
 
 // Initialize firebase-admin if not already initialized
 if (!admin.apps.length) {
@@ -27,6 +33,8 @@ if (!admin.apps.length) {
 
 app.use('/api/admin', adminRoutes)
 app.use('/api/users', usersRoutes)
+app.use('/api/orders', ordersRoutes)
+app.use('/api/settings/payment', settingsRoutes)
 
 // Health
 app.get('/api/health', (req, res) => res.json({ ok: true }))
@@ -35,17 +43,6 @@ app.get('/api/health', (req, res) => res.json({ ok: true }))
 app.get('/api/products', async (req, res) => {
   const products = await Product.find().limit(500).lean()
   res.json(products)
-})
-
-// Admin create (protected: admin role required)
-app.post('/api/products', authorizeRole('admin'), async (req, res) => {
-  const body = req.body
-  try {
-    const p = await Product.create(body)
-    res.json(p)
-  } catch (err) {
-    res.status(400).json({ error: err.message })
-  }
 })
 
 // Connect DB and start
