@@ -8,28 +8,16 @@ const usersRoutes = require('./routes/users')
 const ordersRoutes = require('./routes/orders')
 const settingsRoutes = require('./routes/adminSettings')
 const authorizeRole = require('./middleware/authorizeRole')
-const admin = require('firebase-admin')
+const admin = require('./firebaseAdmin')
 
 const app = express()
 app.use(cors())
 app.use(express.json())
 
-// serve uploads
+// serve uploads (temporary local files if any)
 app.use('/uploads', express.static(path.join(__dirname,'..','..','uploads')))
 
-// Initialize firebase-admin if not already initialized
-if (!admin.apps.length) {
-  try {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
-      : null
-    admin.initializeApp({
-      credential: serviceAccount ? admin.credential.cert(serviceAccount) : admin.credential.applicationDefault(),
-    })
-  } catch (err) {
-    console.warn('Firebase admin initialization skipped or failed:', err && err.message)
-  }
-}
+// Initialize firebase-admin if not already initialized (moved to firebaseAdmin.js)
 
 app.use('/api/admin', adminRoutes)
 app.use('/api/users', usersRoutes)

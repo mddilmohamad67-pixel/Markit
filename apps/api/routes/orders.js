@@ -5,15 +5,27 @@ const path = require('path')
 const Order = require('../models/Order')
 const Setting = require('../models/Setting')
 const authorizeRole = require('../middleware/authorizeRole')
+const admin = require('../firebaseAdmin')
+const fs = require('fs')
+const { notifyUser } = require('../utils/notify')
+const AuditLog = require('../models/AuditLog')
 
-// multer config
+// multer config (store locally then upload to Firebase Storage)
 const upload = multer({ dest: path.join(__dirname,'..','..','uploads') })
+
+async function uploadToFirebase(localPath, remotePath) {
+  const bucket = admin.storage().bucket()
+  await bucket.upload(localPath, { destination: remotePath })
+  // make signed URL
+  const file = bucket.file(remotePath)
+  const [url] = await file.getSignedUrl({ action: 'read', expires: '03-01-2500' })
+  return url
+}
 
 // Create order
 router.post('/', async (req, res) => {
   try {
-    const { items, total, address, paymentMethod } = req.body
-    // create order; payment details for manual_qr are set from settings
+    const { items, total, address, paymentMethod, userId } = req.body
     const settingsDoc = await Setting.findOne({ key: 'payment_manual_qr' }).lean()
     const paymentDefaults = settingsDoc ? settingsDoc.value : {}
     const payment = {
@@ -23,7 +35,7 @@ router.post('/', async (req, res) => {
       paymentStatus: paymentMethod === 'cod' ? 'cod' : 'not_paid'
     }
 
-    const order = await Order.create({ items, total, address, payment, statusTimeline: [{ status: 'created', at: new Date() }], currentStatus: paymentMethod === 'cod' ? 'confirmed' : 'pending_payment' })
+    const order = await Order.create({ userId, items, total, address, payment, statusTimeline: [{ status: 'created', at: new Date() }], currentStatus: paymentMethod === 'cod' ? 'confirmed' : 'pending_payment' })
     res.json(order)
   } catch (err) {
     console.error('create order error', err)
@@ -37,10 +49,14 @@ router.post('/:id/proof', upload.single('screenshot'), async (req, res) => {
     const { id } = req.params
     const { utr } = req.body
     if (!req.file) return res.status(400).json({ error: 'Screenshot required' })
-    const fileUrl = `/uploads/${req.file.filename}`
+    const localPath = req.file.path
+    const remotePath = `orders/${id}/${req.file.filename}${path.extname(req.file.originalname)}`
+    const fileUrl = await uploadToFirebase(localPath, remotePath)
+    // delete local
+    try { fs.unlinkSync(localPath) } catch (e) {}
+
     const order = await Order.findById(id)
     if (!order) return res.status(404).json({ error: 'Order not found' })
-    // only allow if payment method is manual_qr
     if (!order.payment || order.payment.method !== 'manual_qr') return res.status(400).json({ error: 'Invalid payment method for proof upload' })
 
     order.payment.proofImageUrl = fileUrl
@@ -49,6 +65,12 @@ router.post('/:id/proof', upload.single('screenshot'), async (req, res) => {
     order.statusTimeline.push({ status: 'pending_verification', at: new Date() })
     order.currentStatus = 'pending_verification'
     await order.save()
+
+    // Notify user (if any)
+    if (order.userId) {
+      await notifyUser(order.userId, 'Payment Submitted', `Your payment proof for order ${order._id} is submitted and pending verification.`)
+    }
+
     res.json({ ok: true, order })
   } catch (err) {
     console.error('proof upload error', err)
@@ -82,6 +104,7 @@ router.get('/', authorizeRole('admin'), async (req, res) => {
 // Admin: approve/reject payment
 router.post('/:id/verify', authorizeRole('admin'), async (req, res) => {
   try {
+    const adminId = req.user && req.user.id
     const { action } = req.body // 'approve' or 'reject'
     const order = await Order.findById(req.params.id)
     if (!order) return res.status(404).json({ error: 'Order not found' })
@@ -92,15 +115,14 @@ router.post('/:id/verify', authorizeRole('admin'), async (req, res) => {
       order.payment.paymentStatus = 'approved'
       order.statusTimeline.push({ status: 'payment_approved', at: new Date() })
       order.currentStatus = 'confirmed'
-      // create a notification (simple approach)
-      const Notification = require('../models/Notification')
-      await Notification.create({ userId: order.userId, title: 'Payment Approved', body: `Your payment for order ${order._id} has been approved. Order confirmed.` })
+      await notifyUser(order.userId, 'Payment Approved', `Your payment for order ${order._id} has been approved. Order confirmed.`)
+      await AuditLog.create({ adminId, action: 'approve_payment', meta: { orderId: order._id } })
     } else {
       order.payment.paymentStatus = 'rejected'
       order.statusTimeline.push({ status: 'payment_rejected', at: new Date() })
       order.currentStatus = 'payment_rejected'
-      const Notification = require('../models/Notification')
-      await Notification.create({ userId: order.userId, title: 'Payment Rejected', body: `Your payment for order ${order._id} was rejected. Please upload a valid proof or contact support.` })
+      await notifyUser(order.userId, 'Payment Rejected', `Your payment for order ${order._id} was rejected. Please upload a valid proof or contact support.`)
+      await AuditLog.create({ adminId, action: 'reject_payment', meta: { orderId: order._id } })
     }
 
     await order.save()

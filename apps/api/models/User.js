@@ -7,6 +7,8 @@ const UserSchema = new mongoose.Schema({
   firebaseUid: { type: String, index: true },
   role: { type: String, enum: ['user','admin','staff','delivery'], default: 'user' },
   name: String,
+  phone: String,
+  fcmTokens: [String]
 }, { timestamps: true })
 
 UserSchema.methods.verifyPassword = function(password) {
